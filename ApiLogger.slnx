@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="ApiLogger.csproj" />
+  <Project Path="ApiLogger.Tests/ApiLogger.Tests.csproj" />
+</Solution>
