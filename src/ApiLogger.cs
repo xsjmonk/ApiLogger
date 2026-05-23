@@ -18,25 +18,25 @@ public sealed class ApiLogger : IApiLogger, IDisposable
     public void LogInfo(string info)
     {
         if (_disposed) return;
-        _payloadLogger.Log(DateTime.UtcNow, ApiLogKind.Info, new ApiLogMessagePayload(info));
+        _payloadLogger.Log(ApiLogTimestamps.Now, ApiLogKind.Info, new ApiLogMessagePayload(info));
     }
 
     public void LogWarning(string warning)
     {
         if (_disposed) return;
-        _payloadLogger.Log(DateTime.UtcNow, ApiLogKind.Warning, new ApiLogMessagePayload(warning));
+        _payloadLogger.Log(ApiLogTimestamps.Now, ApiLogKind.Warning, new ApiLogMessagePayload(warning));
     }
 
     public void LogError(string error)
     {
         if (_disposed) return;
-        _payloadLogger.Log(DateTime.UtcNow, ApiLogKind.Error, new ApiLogMessagePayload(error));
+        _payloadLogger.Log(ApiLogTimestamps.Now, ApiLogKind.Error, new ApiLogMessagePayload(error));
     }
 
     public void LogError(string error, Exception ex)
     {
         if (_disposed) return;
-        _payloadLogger.Log(DateTime.UtcNow, ApiLogKind.Error, new ApiLogMessagePayload(error, ex));
+        _payloadLogger.Log(ApiLogTimestamps.Now, ApiLogKind.Error, new ApiLogMessagePayload(error, ex));
     }
 
     public void Dispose()

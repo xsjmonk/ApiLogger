@@ -41,7 +41,7 @@ public sealed class ApiLoggerAdapter<TPayload> : ILogger
         }
 
         var message = formatter(state, exception);
-        var timestamp = DateTime.UtcNow;
+        var timestamp = ApiLogTimestamps.Now;
         var payload = _payloadFactory.Create(timestamp, logLevel, eventId, _categoryName, message, exception);
 
         var kind = logLevel switch

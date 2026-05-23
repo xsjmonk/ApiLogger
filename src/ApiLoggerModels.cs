@@ -2,6 +2,12 @@ using System;
 
 namespace ApiLogger;
 
+/// <summary>Timestamps written to log files use local machine time.</summary>
+public static class ApiLogTimestamps
+{
+    public static DateTime Now => DateTime.Now;
+}
+
 public enum ApiLogKind
 {
     Info = 0,
