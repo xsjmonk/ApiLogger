@@ -25,7 +25,21 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
     private readonly ILogger<ApiLogWriter<TPayload>> _logger;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly List<string> _bufferLines = [];
+    private struct BufferedLine
+    {
+        public string Line;
+        public string ActiveFileName;
+
+        public BufferedLine(string line, string activeFileName)
+        {
+            Line = line;
+            ActiveFileName = activeFileName;
+        }
+    }
+
+    // Buffered lines now also track which "active file" they belong to.
+    // This enables tagged logging without changing public ILogger interfaces.
+    private readonly List<BufferedLine> _bufferLines = [];
     private long _pendingBytes;
     private int _pendingItems;
 
@@ -96,7 +110,13 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
         }
 
         var line = _formatter.Format(item);
-        var lineWithEol = line + Environment.NewLine;
+
+        // Tagged routing:
+        // If the formatted payload starts with our tag token, write this entry into:
+        //   LogFileName + "." + tag + extension
+        // while keeping the same rotation/cleanup logic.
+        var (activeFileName, cleanedLine) = TryExtractTagAndCleanLine(line);
+        var lineWithEol = cleanedLine + Environment.NewLine;
 
         // Track bytes for rotation threshold; do not assume 1 char == 1 byte.
         var lineBytes = Utf8WithoutBom.GetByteCount(lineWithEol);
@@ -113,7 +133,7 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
         }
         try
         {
-            _bufferLines.Add(lineWithEol);
+            _bufferLines.Add(new BufferedLine(lineWithEol, activeFileName));
             _pendingBytes += lineBytes;
             _pendingItems++;
 
@@ -199,34 +219,46 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
             return;
         }
 
-        var activeFilePath = GetActiveFilePath();
         try
         {
-            var currentLength = File.Exists(activeFilePath)
-                ? new FileInfo(activeFilePath).Length
-                : 0L;
+            var currentLengths = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
 
-            // Correctness-first: rotate while writing buffered lines so the active file
+            // Correctness-first: rotate while writing buffered lines so each active file
             // cannot grow far beyond _rotateSizeBytes just because the flush batch is large.
-            foreach (var line in _bufferLines)
+            foreach (var entry in _bufferLines)
             {
-                var lineBytes = Utf8WithoutBom.GetByteCount(line);
+                var activeFileName = entry.ActiveFileName;
+                var activeFilePath = GetActiveFilePath(activeFileName);
+
+                if (!currentLengths.TryGetValue(activeFileName, out var currentLength))
+                {
+                    currentLength = File.Exists(activeFilePath)
+                        ? new FileInfo(activeFilePath).Length
+                        : 0L;
+                }
+
+                var lineBytes = Utf8WithoutBom.GetByteCount(entry.Line);
 
                 if (currentLength > 0 && currentLength + lineBytes > _rotateSizeBytes)
                 {
-                    RotateActiveFile(activeFilePath);
+                    RotateActiveFile(activeFilePath, activeFileName);
                     currentLength = 0L;
                 }
 
-                await File.AppendAllTextAsync(activeFilePath, line, Utf8WithoutBom, cancellationToken);
+                await File.AppendAllTextAsync(activeFilePath, entry.Line, Utf8WithoutBom, cancellationToken);
                 currentLength += lineBytes;
+                currentLengths[activeFileName] = currentLength;
             }
 
             _bufferLines.Clear();
             _pendingBytes = 0;
             _pendingItems = 0;
 
-            CleanupOldLogFiles();
+            // Cleanup for all involved active files (default + tag files).
+            foreach (var kv in currentLengths)
+            {
+                CleanupOldLogFiles(kv.Key);
+            }
         }
         catch (Exception ex)
         {
@@ -235,27 +267,27 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
         }
     }
 
-    private string GetActiveFilePath()
+    private string GetActiveFilePath(string activeFileName)
     {
-        return Path.Combine(_logDir, _activeFileName);
+        return Path.Combine(_logDir, activeFileName);
     }
 
-    private string GetRotatedFilePath(int index)
+    private string GetRotatedFilePath(string activeFileName, int index)
     {
-        var nameWithoutExt = Path.GetFileNameWithoutExtension(_activeFileName);
-        var ext = Path.GetExtension(_activeFileName);
+        var nameWithoutExt = Path.GetFileNameWithoutExtension(activeFileName);
+        var ext = Path.GetExtension(activeFileName);
         return Path.Combine(_logDir, $"{nameWithoutExt}.{index}{ext}");
     }
 
-    private int? TryParseRotatedLogIndex(string fileName)
+    private int? TryParseRotatedLogIndex(string activeFileName, string fileName)
     {
         if (string.IsNullOrWhiteSpace(fileName))
         {
             return null;
         }
 
-        var activeNameWithoutExt = Path.GetFileNameWithoutExtension(_activeFileName);
-        var activeExt = Path.GetExtension(_activeFileName);
+        var activeNameWithoutExt = Path.GetFileNameWithoutExtension(activeFileName);
+        var activeExt = Path.GetExtension(activeFileName);
         var rotatedPrefix = $"{activeNameWithoutExt}.";
         var rotatedSuffix = activeExt;
 
@@ -265,7 +297,7 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
             return null;
         }
 
-        if (string.Equals(fileName, _activeFileName, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(fileName, activeFileName, StringComparison.OrdinalIgnoreCase))
         {
             return null;
         }
@@ -304,41 +336,52 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
             return;
         }
 
-        var rotatedPath = GetNextRotatedFilePath();
+        var rotatedPath = GetNextRotatedFilePath(_activeFileName);
         File.Move(activeFilePath, rotatedPath);
         await Task.CompletedTask;
     }
 
     private void RotateActiveFile(string activeFilePath)
     {
-        if (!File.Exists(activeFilePath))
-        {
-            return;
-        }
-
-        var activeLength = new FileInfo(activeFilePath).Length;
-        if (activeLength <= 0)
-        {
-            return;
-        }
-
-        var rotatedPath = GetNextRotatedFilePath();
-        File.Move(activeFilePath, rotatedPath);
+        RotateActiveFile(activeFilePath, _activeFileName);
     }
 
-    private int GetNextRotatedFilePathIndex()
+    private void RotateActiveFile(string activeFilePath, string activeFileName)
     {
         try
         {
-            var activeNameWithoutExt = Path.GetFileNameWithoutExtension(_activeFileName);
-            var activeExt = Path.GetExtension(_activeFileName);
+            if (!File.Exists(activeFilePath))
+            {
+                return;
+            }
+
+            var activeLength = new FileInfo(activeFilePath).Length;
+            if (activeLength <= 0)
+            {
+                return;
+            }
+
+            var rotatedPath = GetNextRotatedFilePath(activeFileName);
+            File.Move(activeFilePath, rotatedPath);
+        }
+        catch
+        {
+        }
+    }
+
+    private int GetNextRotatedFilePathIndex(string activeFileName)
+    {
+        try
+        {
+            var activeNameWithoutExt = Path.GetFileNameWithoutExtension(activeFileName);
+            var activeExt = Path.GetExtension(activeFileName);
             var searchPattern = $"{activeNameWithoutExt}.*{activeExt}";
 
             var maxIndex = 0;
             foreach (var file in Directory.EnumerateFiles(_logDir, searchPattern))
             {
                 var name = Path.GetFileName(file);
-                var idx = TryParseRotatedLogIndex(name);
+                var idx = TryParseRotatedLogIndex(activeFileName, name);
                 if (idx.HasValue && idx.Value > maxIndex)
                 {
                     maxIndex = idx.Value;
@@ -353,22 +396,22 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
         }
     }
 
-    private string GetNextRotatedFilePath()
+    private string GetNextRotatedFilePath(string activeFileName)
     {
-        var nextIndex = GetNextRotatedFilePathIndex();
-        return GetRotatedFilePath(nextIndex);
+        var nextIndex = GetNextRotatedFilePathIndex(activeFileName);
+        return GetRotatedFilePath(activeFileName, nextIndex);
     }
 
-    private void CleanupOldLogFiles()
+    private void CleanupOldLogFiles(string activeFileName)
     {
         try
         {
-            var activeNameWithoutExt = Path.GetFileNameWithoutExtension(_activeFileName);
-            var activeExt = Path.GetExtension(_activeFileName);
+            var activeNameWithoutExt = Path.GetFileNameWithoutExtension(activeFileName);
+            var activeExt = Path.GetExtension(activeFileName);
             var searchPattern = $"{activeNameWithoutExt}.*{activeExt}";
 
             var rotatedFiles = Directory.EnumerateFiles(_logDir, searchPattern)
-                .Select(path => new { Path = path, Index = TryParseRotatedLogIndex(Path.GetFileName(path)) })
+                .Select(path => new { Path = path, Index = TryParseRotatedLogIndex(activeFileName, Path.GetFileName(path)) })
                 .Where(x => x.Index.HasValue)
                 .Select(x => new { x.Path, Index = x.Index!.Value })
                 .OrderByDescending(x => x.Index)
@@ -389,6 +432,121 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
         catch
         {
         }
+    }
+
+    private const string TagTokenPrefix = "[[TAG:";
+    private const string TagTokenSuffix = "]]";
+    private const string TagParamTokenPrefix = "[[TAGPARAM:";
+
+    private (string ActiveFileName, string CleanedLine) TryExtractTagAndCleanLine(string formattedLine)
+    {
+        // Default routing: keep existing behavior.
+        var activeFileName = _activeFileName;
+        var cleanedLine = formattedLine;
+
+        // Formatter output is tab-separated.
+        // For ApiLogMessagePayload (ILogger), DefaultApiLogMessageFormatter outputs:
+        //   timestamp \t kind \t message \t exceptionType \t exceptionMessage \t exceptionStackTrace
+        //
+        // For other payload formatters, it might output only:
+        //   timestamp \t kind \t payloadText
+        //
+        // To support all of these without hard dependency on formatter type,
+        // we treat "the message/payloadText column" as the segment after the second '\t'.
+        var firstTab = formattedLine.IndexOf('\t');
+        if (firstTab < 0)
+        {
+            return (activeFileName, cleanedLine);
+        }
+
+        var secondTab = formattedLine.IndexOf('\t', firstTab + 1);
+        if (secondTab < 0)
+        {
+            return (activeFileName, cleanedLine);
+        }
+
+        var thirdTab = formattedLine.IndexOf('\t', secondTab + 1);
+        var payloadStart = secondTab + 1;
+        var payloadEnd = thirdTab < 0 ? formattedLine.Length : thirdTab;
+        if (payloadEnd <= payloadStart)
+        {
+            return (activeFileName, cleanedLine);
+        }
+
+        var payloadText = formattedLine.Substring(payloadStart, payloadEnd - payloadStart);
+
+        // ApiLogMessagePayloadFactory commonly prefixes messages with:
+        //   [{shortCategoryName}] {message}
+        // so the token may not be the first characters in payloadText.
+        var tokenIdx = payloadText.StartsWith(TagTokenPrefix, StringComparison.Ordinal)
+            ? 0
+            : payloadText.IndexOf(TagTokenPrefix, StringComparison.Ordinal);
+
+        if (tokenIdx >= 0)
+        {
+            // Allow token either at the beginning, or immediately after the category prefix: "] "
+            if (tokenIdx != 0)
+            {
+                if (tokenIdx < 2 || payloadText[tokenIdx - 2] != ']' || payloadText[tokenIdx - 1] != ' ')
+                {
+                    return (activeFileName, cleanedLine);
+                }
+            }
+
+            var tagStart = tokenIdx + TagTokenPrefix.Length;
+            var tagEnd = payloadText.IndexOf(TagTokenSuffix, tagStart, StringComparison.Ordinal);
+            if (tagEnd > tagStart)
+            {
+                var tag = payloadText.Substring(tagStart, tagEnd - tagStart);
+                var safeTag = MakeSafeFileNamePart(tag);
+                if (!string.IsNullOrWhiteSpace(safeTag))
+                {
+                    // Strip optional tag-param token(s) from payload text.
+                    var prefix = payloadText.Substring(0, tokenIdx); // includes optional category prefix
+                    var rest = payloadText.Substring(tagEnd + TagTokenSuffix.Length).TrimStart();
+
+                    if (rest.StartsWith(TagParamTokenPrefix, StringComparison.Ordinal))
+                    {
+                        var paramStart = TagParamTokenPrefix.Length;
+                        var paramEnd = rest.IndexOf(TagTokenSuffix, paramStart, StringComparison.Ordinal);
+                        if (paramEnd > paramStart)
+                        {
+                            rest = rest.Substring(paramEnd + TagTokenSuffix.Length).TrimStart();
+                        }
+                    }
+
+                    cleanedLine = formattedLine.Substring(0, payloadStart) + prefix + rest + formattedLine.Substring(payloadEnd);
+                    activeFileName = BuildTaggedActiveFileName(safeTag);
+                }
+            }
+        }
+
+        return (activeFileName, cleanedLine);
+    }
+
+    private string BuildTaggedActiveFileName(string tag)
+    {
+        var nameWithoutExt = Path.GetFileNameWithoutExtension(_activeFileName);
+        var ext = Path.GetExtension(_activeFileName);
+        return $"{nameWithoutExt}.{tag}{ext}";
+    }
+
+    private static string MakeSafeFileNamePart(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new StringBuilder(value.Length);
+        foreach (var ch in value)
+        {
+            sb.Append(Array.IndexOf(invalid, ch) >= 0 ? '_' : ch);
+        }
+
+        var safe = sb.ToString().Trim();
+        return string.IsNullOrWhiteSpace(safe) ? string.Empty : safe;
     }
 }
 

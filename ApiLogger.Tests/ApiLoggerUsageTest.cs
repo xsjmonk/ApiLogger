@@ -234,6 +234,52 @@ public sealed class ApiLoggerUsageTest
     }
 
     [Fact]
+    public async Task LoggerWithTag_WritesToTaggedLogFile()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"ApiLoggerTest_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ApiLogger:LogDir"] = tempDir,
+                    ["ApiLogger:LogFileName"] = "app.txt",
+                    ["ApiLogger:RotateSize"] = "10MB",
+                })
+                .Build();
+
+            var handle = ApiLoggerFactory.CreateLogger(configuration);
+            try
+            {
+                handle.Logger.LogWithTag(
+                    logLevel: LogLevel.Information,
+                    tag: "my_tag",
+                    message: "tag-message");
+
+                await handle.FlushAsync();
+            }
+            finally
+            {
+                await handle.DisposeAsync();
+            }
+
+            var taggedLogFile = Path.Combine(tempDir, "app.my_tag.txt");
+            Assert.True(File.Exists(taggedLogFile), "Tagged log file should exist.");
+
+            var content = await File.ReadAllTextAsync(taggedLogFile);
+            Assert.Contains("tag-message", content);
+
+            var normalLogFile = Path.Combine(tempDir, "app.txt");
+            Assert.False(File.Exists(normalLogFile), "Normal log file should not be created for tagged-only write.");
+        }
+        finally
+        {
+            Directory.Delete(tempDir, true);
+        }
+    }
+
+    [Fact]
     public async Task Console_NoDependencyInjection_ILogger_DisposeHandle_DrainsWithoutRuntimeAccess()
     {
         var tempDir = Path.Combine(Path.GetTempPath(), $"ApiLoggerTest_{Guid.NewGuid():N}");
