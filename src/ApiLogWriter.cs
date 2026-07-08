@@ -11,7 +11,7 @@ public interface IApiLogWriter<TPayload>
 
 public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposable
 {
-    private static readonly UTF8Encoding Utf8WithoutBom = new(false);
+    private readonly Encoding _encoding;
     private const int TotalRetainedRotatedFiles = 4; // active + up to 4 rotated
 
     private const int FlushIntervalMilliseconds = 1000;
@@ -58,6 +58,8 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
         _rotateSizeBytes = options.RotateSizeBytes > 0 ? options.RotateSizeBytes : 10 * 1024 * 1024;
         _formatter = formatter;
         _logger = logger;
+
+        _encoding = ResolveEncoding(options.Encoding);
 
         Directory.CreateDirectory(_logDir);
 
@@ -119,7 +121,7 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
         var lineWithEol = cleanedLine + Environment.NewLine;
 
         // Track bytes for rotation threshold; do not assume 1 char == 1 byte.
-        var lineBytes = Utf8WithoutBom.GetByteCount(lineWithEol);
+        var lineBytes = _encoding.GetByteCount(lineWithEol);
 
         var lockTaken = false;
         try
@@ -237,7 +239,7 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
                         : 0L;
                 }
 
-                var lineBytes = Utf8WithoutBom.GetByteCount(entry.Line);
+                var lineBytes = _encoding.GetByteCount(entry.Line);
 
                 if (currentLength > 0 && currentLength + lineBytes > _rotateSizeBytes)
                 {
@@ -245,7 +247,7 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
                     currentLength = 0L;
                 }
 
-                await File.AppendAllTextAsync(activeFilePath, entry.Line, Utf8WithoutBom, cancellationToken);
+                await File.AppendAllTextAsync(activeFilePath, entry.Line, _encoding, cancellationToken);
                 currentLength += lineBytes;
                 currentLengths[activeFileName] = currentLength;
             }
@@ -547,6 +549,26 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
 
         var safe = sb.ToString().Trim();
         return string.IsNullOrWhiteSpace(safe) ? string.Empty : safe;
+    }
+
+    private static Encoding ResolveEncoding(string encodingName)
+    {
+        if (string.IsNullOrWhiteSpace(encodingName))
+            return new UTF8Encoding(false);
+
+        var normalized = encodingName.Trim().ToLowerInvariant();
+
+        if (normalized is "utf-8" or "utf8")
+            return new UTF8Encoding(false);
+
+        try
+        {
+            return Encoding.GetEncoding(encodingName.Trim());
+        }
+        catch
+        {
+            return new UTF8Encoding(false);
+        }
     }
 }
 

@@ -9,6 +9,7 @@ public sealed class ApiLogOptions
     public string LogFileName { get; set; } = string.Empty;
     public string RotateSize { get; set; } = "10MB";
     public long RotateSizeBytes { get; set; } = 10 * 1024 * 1024;
+    public string Encoding { get; set; } = "utf-8";
 
     public static long ParseRotateSizeBytesOrDefault(string? value, long defaultBytes)
     {

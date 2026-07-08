@@ -25,7 +25,8 @@ internal static class ApiLogOptionsFactory
             RotateSize = options.RotateSize,
             RotateSizeBytes = options.RotateSizeBytes > 0
                 ? options.RotateSizeBytes
-                : ApiLogOptions.ParseRotateSizeBytesOrDefault(options.RotateSize, DefaultRotateSizeBytes)
+                : ApiLogOptions.ParseRotateSizeBytesOrDefault(options.RotateSize, DefaultRotateSizeBytes),
+            Encoding = options.Encoding
         };
         NormalizeFileName(normalized);
         return normalized;
@@ -39,7 +40,8 @@ internal static class ApiLogOptionsFactory
             LogDir = string.Empty,
             LogFileName = fileName,
             RotateSize = "10MB",
-            RotateSizeBytes = DefaultRotateSizeBytes
+            RotateSizeBytes = DefaultRotateSizeBytes,
+            Encoding = "utf-8"
         };
     }
 
@@ -66,6 +68,9 @@ internal static class ApiLogOptionsFactory
         {
             options.RotateSizeBytes = ApiLogOptions.ParseRotateSizeBytesOrDefault(options.RotateSize, DefaultRotateSizeBytes);
         }
+
+        var encoding = section["Encoding"];
+        options.Encoding = string.IsNullOrWhiteSpace(encoding) ? "utf-8" : encoding.Trim();
 
         NormalizeFileName(options);
         return options;
