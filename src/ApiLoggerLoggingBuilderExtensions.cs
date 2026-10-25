@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 namespace ApiLogger;
@@ -62,15 +63,15 @@ public static class ApiLoggerLoggingBuilderExtensions
         services.AddSingleton<IApiLogQueue<ApiLogMessagePayload>>(sp => sp.GetRequiredService<ApiLogQueue<ApiLogMessagePayload>>());
         services.AddSingleton<IApiLogWriter<ApiLogMessagePayload>, ApiLogWriter<ApiLogMessagePayload>>();
         services.AddSingleton<IApiPayloadLogger<ApiLogMessagePayload>, ApiPayloadLogger<ApiLogMessagePayload>>();
-        services.AddSingleton<ApiLogRuntime<ApiLogMessagePayload>>(sp =>
-            new ApiLogRuntime<ApiLogMessagePayload>(
-                sp.GetRequiredService<ApiLogOptions>(),
-                sp.GetRequiredService<IApiLogFormatter<ApiLogMessagePayload>>(),
-                null));
-        services.AddSingleton<IApiLogRuntime<ApiLogMessagePayload>>(sp => sp.GetRequiredService<ApiLogRuntime<ApiLogMessagePayload>>());
-        services.AddSingleton<IApiPayloadLogger<ApiLogMessagePayload>>(sp => sp.GetRequiredService<ApiLogRuntime<ApiLogMessagePayload>>());
         services.AddSingleton<IApiLogger, ApiLogger>(sp =>
             new ApiLogger(sp.GetRequiredService<IApiPayloadLogger<ApiLogMessagePayload>>()));
+
+        // Same pipeline as IServiceCollection.AddApiLogger: queue + writer + ApiLogHostedService drain loop.
+        services.AddHostedService(sp =>
+            new ApiLogHostedService<ApiLogMessagePayload>(
+                sp.GetRequiredService<ApiLogQueue<ApiLogMessagePayload>>(),
+                sp.GetRequiredService<IApiLogWriter<ApiLogMessagePayload>>(),
+                sp.GetRequiredService<ILogger<ApiLogHostedService<ApiLogMessagePayload>>>()));
     }
 
     private static void TryAddProvider(IServiceCollection services)

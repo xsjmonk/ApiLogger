@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -107,6 +108,26 @@ public static class ApiLoggerServiceCollectionExtensions
         IConfiguration configuration)
     {
         return services.AddApiLogger<TPayload>(configuration, ResolveDefaultFormatter<TPayload>());
+    }
+
+    /// <summary>
+    /// ASP.NET Core / Generic Host with <see cref="ILogger"/> consumers:
+    /// registers <see cref="ApiLogHostedService{TPayload}"/> (same as <see cref="AddApiLogger(IConfiguration)"/>)
+    /// and attaches <see cref="ApiLoggerProvider{TPayload}"/> to Microsoft.Extensions.Logging.
+    /// </summary>
+    public static IServiceCollection AddApiLoggerForAspNetCore(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        services.AddApiLogger(configuration);
+
+        services.TryAddSingleton<IApiLogPayloadFactory<ApiLogMessagePayload>>(new ApiLogMessagePayloadFactory());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<ILoggerProvider, ApiLoggerProvider<ApiLogMessagePayload>>(sp =>
+            new ApiLoggerProvider<ApiLogMessagePayload>(
+                sp.GetRequiredService<IApiPayloadLogger<ApiLogMessagePayload>>(),
+                sp.GetRequiredService<IApiLogPayloadFactory<ApiLogMessagePayload>>())));
+
+        return services;
     }
 
     // Ready-made IApiLogger overloads with IHostedService

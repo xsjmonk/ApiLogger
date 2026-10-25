@@ -116,6 +116,14 @@ builder.Services.AddApiLogger(
 
 The host starts and stops a hosted service that manages background queue draining. On host stop, queued items are drained automatically.
 
+When the app also uses `ILogger<T>` (controllers, hosted services, etc.), register the hosted service **once** and attach the logging provider in one call:
+
+```csharp
+builder.Services.AddApiLoggerForAspNetCore(builder.Configuration);
+```
+
+Do **not** call both `AddApiLogger(configuration)` and `AddLogging(l => l.AddApiLogger(configuration))` — that registers two drain loops and can deadlock startup.
+
 For ready-made string-based logging with `IApiLogger`:
 
 ```csharp

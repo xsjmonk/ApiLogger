@@ -473,6 +473,28 @@ using var runtime = ApiLogRuntimeFactory.Create<TestPayload>(
     }
 
     [Fact]
+    public void AddApiLogger_WithConfiguration_ResolvesRelativeLogDirUnderAppBaseDirectory()
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new[]
+            {
+                new KeyValuePair<string, string?>("ApiLogger:LogDir", "logs/api"),
+                new KeyValuePair<string, string?>("ApiLogger:LogFileName", "test.txt"),
+            })
+            .Build();
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddApiLogger<TestPayload>(config, new TestFormatter());
+
+        using var sp = services.BuildServiceProvider();
+        var options = sp.GetRequiredService<ApiLogOptions>();
+
+        var expected = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "logs", "api"));
+        Assert.Equal(expected, options.LogDir);
+    }
+
+    [Fact]
     public void AddApiLogger_WithConfiguration_ReadsOnlyApiLoggerNode()
     {
         // Arrange

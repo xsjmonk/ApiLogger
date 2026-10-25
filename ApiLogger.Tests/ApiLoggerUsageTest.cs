@@ -204,8 +204,18 @@ public sealed class ApiLoggerUsageTest
                 services.AddLogging(builder => builder.AddApiLogger(configuration));
 
                 await using var provider = services.BuildServiceProvider();
+                foreach (var hosted in provider.GetServices<IHostedService>())
+                {
+                    await hosted.StartAsync(CancellationToken.None);
+                }
+
                 var logger = provider.GetRequiredService<ILogger<ApiLoggerUsageTest>>();
                 logger.LogInformation("from-logging-builder");
+
+                foreach (var hosted in provider.GetServices<IHostedService>())
+                {
+                    await hosted.StopAsync(CancellationToken.None);
+                }
             }
             Assert.True(File.Exists(logFile));
             var content = await File.ReadAllTextAsync(logFile);
@@ -227,8 +237,18 @@ public sealed class ApiLoggerUsageTest
             services.AddLogging(builder => builder.AddApiLogger());
 
             await using var provider = services.BuildServiceProvider();
+            foreach (var hosted in provider.GetServices<IHostedService>())
+            {
+                await hosted.StartAsync(CancellationToken.None);
+            }
+
             var logger = provider.GetRequiredService<ILogger<ApiLoggerUsageTest>>();
             logger.LogInformation("logging-builder-no-config");
+
+            foreach (var hosted in provider.GetServices<IHostedService>())
+            {
+                await hosted.StopAsync(CancellationToken.None);
+            }
         }
         Assert.True(File.Exists(logFile));
     }

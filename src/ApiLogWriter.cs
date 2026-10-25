@@ -22,7 +22,6 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
     private readonly string _activeFileName;
     private readonly long _rotateSizeBytes;
     private readonly IApiLogFormatter<TPayload> _formatter;
-    private readonly ILogger<ApiLogWriter<TPayload>> _logger;
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private struct BufferedLine
@@ -50,14 +49,12 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
 
     public ApiLogWriter(
         ApiLogOptions options,
-        IApiLogFormatter<TPayload> formatter,
-        ILogger<ApiLogWriter<TPayload>> logger)
+        IApiLogFormatter<TPayload> formatter)
     {
         _logDir = string.IsNullOrWhiteSpace(options.LogDir) ? AppContext.BaseDirectory : options.LogDir;
         _activeFileName = string.IsNullOrWhiteSpace(options.LogFileName) ? "app.txt" : options.LogFileName;
         _rotateSizeBytes = options.RotateSizeBytes > 0 ? options.RotateSizeBytes : 10 * 1024 * 1024;
         _formatter = formatter;
-        _logger = logger;
 
         _encoding = ResolveEncoding(options.Encoding);
 
@@ -152,7 +149,7 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
         catch (Exception ex)
         {
             // Keep request logging resilient.
-            _logger.LogError(ex, "ApiLogWriter write/flush failed (resilient).");
+            _ = ex;
         }
         finally
         {
@@ -197,7 +194,7 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "ApiLogWriter FlushAsync failed (resilient).");
+            _ = ex;
         }
         finally
         {
@@ -265,7 +262,7 @@ public sealed class ApiLogWriter<TPayload> : IApiLogWriter<TPayload>, IDisposabl
         catch (Exception ex)
         {
             // Keep the pipeline resilient; do not clear buffer on IO failure so a later flush can try again.
-            _logger.LogError(ex, "ApiLogWriter append/rotate failed (resilient).");
+            _ = ex;
         }
     }
 

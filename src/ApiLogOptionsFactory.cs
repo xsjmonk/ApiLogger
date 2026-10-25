@@ -12,6 +12,7 @@ internal static class ApiLogOptionsFactory
         var options = new ApiLogOptions();
         configure(options);
         options.RotateSizeBytes = ApiLogOptions.ParseRotateSizeBytesOrDefault(options.RotateSize, DefaultRotateSizeBytes);
+        NormalizeLogDir(options);
         NormalizeFileName(options);
         return options;
     }
@@ -28,6 +29,7 @@ internal static class ApiLogOptionsFactory
                 : ApiLogOptions.ParseRotateSizeBytesOrDefault(options.RotateSize, DefaultRotateSizeBytes),
             Encoding = options.Encoding
         };
+        NormalizeLogDir(normalized);
         NormalizeFileName(normalized);
         return normalized;
     }
@@ -72,8 +74,30 @@ internal static class ApiLogOptionsFactory
         var encoding = section["Encoding"];
         options.Encoding = string.IsNullOrWhiteSpace(encoding) ? "utf-8" : encoding.Trim();
 
+        NormalizeLogDir(options);
         NormalizeFileName(options);
         return options;
+    }
+
+    /// <summary>
+    /// Relative <see cref="ApiLogOptions.LogDir"/> values resolve under <see cref="AppContext.BaseDirectory"/>.
+    /// Empty values stay empty (writer falls back to base directory).
+    /// </summary>
+    internal static void NormalizeLogDir(ApiLogOptions options)
+    {
+        if (string.IsNullOrWhiteSpace(options.LogDir))
+        {
+            options.LogDir = string.Empty;
+            return;
+        }
+
+        var dir = options.LogDir.Trim();
+        if (!Path.IsPathRooted(dir))
+        {
+            dir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, dir));
+        }
+
+        options.LogDir = dir;
     }
 
     internal static void NormalizeFileName(ApiLogOptions options)

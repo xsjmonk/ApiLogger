@@ -34,15 +34,8 @@ public sealed class ApiLogRuntime<TPayload> : IApiLogRuntime<TPayload>
     {
         _queue = new ApiLogQueue<TPayload>();
 
-        var writerLogger = loggerFactory != null
-            ? loggerFactory.CreateLogger<ApiLogWriter<TPayload>>()
-            : NoOpLogger<ApiLogWriter<TPayload>>.Instance;
-        _writer = new ApiLogWriter<TPayload>(options, formatter, writerLogger);
-
-        var adapterLogger = loggerFactory != null
-            ? loggerFactory.CreateLogger<ApiPayloadLogger<TPayload>>()
-            : NoOpLogger<ApiPayloadLogger<TPayload>>.Instance;
-        _loggerAdapter = new ApiPayloadLogger<TPayload>(_queue, adapterLogger);
+        _writer = new ApiLogWriter<TPayload>(options, formatter);
+        _loggerAdapter = new ApiPayloadLogger<TPayload>(_queue);
 
         _logger = loggerFactory != null
             ? loggerFactory.CreateLogger<ApiLogRuntime<TPayload>>()

@@ -2,13 +2,13 @@ using System.Threading.Channels;
 
 namespace ApiLogger;
 
-internal enum ApiLogQueueEntryKind
+public enum ApiLogQueueEntryKind
 {
     Log = 0,
     Flush = 1,
 }
 
-internal sealed class ApiLogQueueEntry<TPayload>
+public sealed class ApiLogQueueEntry<TPayload>
 {
     private ApiLogQueueEntry(
         ApiLogQueueEntryKind kind,
@@ -69,9 +69,9 @@ public sealed class ApiLogQueue<TPayload> : IApiLogQueue<TPayload>
             : completion.Task;
     }
 
-    internal ChannelReader<ApiLogQueueEntry<TPayload>> Reader => _channel.Reader;
+    public ChannelReader<ApiLogQueueEntry<TPayload>> Reader => _channel.Reader;
 
-    internal void Complete()
+    public void Complete()
     {
         try
         {
